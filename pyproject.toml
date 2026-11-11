@@ -1,0 +1,22 @@
+[project]
+name = "2001"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Leave-Time", email = "LtimeOfficial@outlook.com" }
+]
+requires-python = ">=3.15"
+dependencies = [
+    "fastapi>=0.162.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+2001 = "_2001:main"
+
+[tool.uv.build-backend]
+module-name = "_2001"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
