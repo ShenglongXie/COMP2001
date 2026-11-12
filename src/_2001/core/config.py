@@ -19,6 +19,13 @@ def _as_bool(raw: str, *, name: str) -> bool:
     raise ValueError(f"{name} must be a boolean, got {raw!r}")
 
 
+def _as_float(raw: str, *, name: str) -> float:
+    try:
+        return float(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from exc
+
+
 def _as_int(raw: str, *, name: str) -> int:
     try:
         return int(raw.strip())
@@ -34,6 +41,13 @@ class Settings:
     log_format: str = "json"
     log_include_caller: bool = False
     request_id_header: str = "X-Request-ID"
+    database_url: str = ""
+    auth_enabled: bool = True
+    auth_url: str = (
+        "https://web.socem.plymouth.ac.uk/COMP2001/auth/api/users"
+    )
+    auth_timeout_seconds: float = 5.0
+    auth_cache_ttl_seconds: float = 30.0
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -68,6 +82,21 @@ class Settings:
                 env.get("LOG_INCLUDE_CALLER", "false"), name="LOG_INCLUDE_CALLER"
             ),
             request_id_header=env.get("REQUEST_ID_HEADER", "X-Request-ID").strip(),
+            database_url=env.get("DATABASE_URL", "").strip(),
+            auth_enabled=_as_bool(
+                env.get("AUTH_ENABLED", "true"), name="AUTH_ENABLED"
+            ),
+            auth_url=env.get(
+                "AUTH_URL",
+                "https://web.socem.plymouth.ac.uk/COMP2001/auth/api/users",
+            ).strip(),
+            auth_timeout_seconds=_as_float(
+                env.get("AUTH_TIMEOUT_SECONDS", "5"), name="AUTH_TIMEOUT_SECONDS"
+            ),
+            auth_cache_ttl_seconds=_as_float(
+                env.get("AUTH_CACHE_TTL_SECONDS", "30"),
+                name="AUTH_CACHE_TTL_SECONDS",
+            ),
             host=env.get("HOST", "127.0.0.1").strip(),
             port=port,
         )

@@ -25,6 +25,7 @@ def settings(stream: io.StringIO) -> Settings:
         environment="test",
         log_level="DEBUG",
         log_format="json",
+        auth_enabled=False,
     )
     configure_logging(settings, stream=stream, force=True)
     return settings

@@ -259,13 +259,11 @@ class Member(Base):
         back_populates="follower",
         foreign_keys="MemberFollow.follower_member_id",
         cascade="all, delete-orphan",
-        passive_deletes=True,
     )
     followers: Mapped[list[MemberFollow]] = relationship(
         back_populates="followee",
         foreign_keys="MemberFollow.followee_member_id",
         cascade="all, delete-orphan",
-        passive_deletes=True,
     )
 
 
