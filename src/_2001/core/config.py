@@ -48,6 +48,7 @@ class Settings:
     )
     auth_timeout_seconds: float = 5.0
     auth_cache_ttl_seconds: float = 30.0
+    docs_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -97,6 +98,7 @@ class Settings:
                 env.get("AUTH_CACHE_TTL_SECONDS", "30"),
                 name="AUTH_CACHE_TTL_SECONDS",
             ),
+            docs_enabled=_as_bool(env.get("DOCS_ENABLED", "true"), name="DOCS_ENABLED"),
             host=env.get("HOST", "127.0.0.1").strip(),
             port=port,
         )

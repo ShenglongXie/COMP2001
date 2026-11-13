@@ -1,0 +1,14 @@
+services:
+  profile-service:
+    image: ${IMAGE:-profile-service:1.0.0}
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AUTH_URL: ${AUTH_URL:-https://web.socem.plymouth.ac.uk/COMP2001/auth/api/users}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    restart: unless-stopped

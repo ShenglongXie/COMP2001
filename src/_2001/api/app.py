@@ -74,6 +74,20 @@ button with your Plymouth email and password.
 
 Successful logins are cached in memory for a short window, so repeated calls
 do not re-contact the authenticator on every request.
+
+**Profile page**
+
+`GET /api/v1/members/me` resolves the caller's own profile from the
+authenticated email, so the app does not have to know its own identifier.
+Activity statistics and saved trails shown on the profile page belong to
+ActivityService and TrailService and are not duplicated here.
+
+**Administration**
+
+The administrator stories (view, edit and delete any profile) use the same
+endpoints: `GET`, `PATCH` and `DELETE` on `/api/v1/members/{member_id}`.
+The authenticator only proves identity and carries no role claim, so
+role separation is not enforced by this service.
 """
 
 
@@ -136,9 +150,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         summary="Member profiles, preferences and follows.",
         description=DESCRIPTION,
         openapi_tags=TAGS_METADATA,
-        docs_url=None if settings.is_production else "/docs",
-        redoc_url=None if settings.is_production else "/redoc",
-        openapi_url=None if settings.is_production else "/openapi.json",
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
         lifespan=lifespan,
     )
     app.state.settings = settings

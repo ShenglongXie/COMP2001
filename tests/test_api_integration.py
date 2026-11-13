@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from _2001.api.app import API_PREFIX, create_app
+from _2001.core.auth import AuthenticatedUser
 from _2001.core.config import Settings
 
 DATABASE_URL = os.environ.get("PROFILE_TEST_DATABASE_URL", "")
@@ -27,6 +28,74 @@ def client() -> TestClient:
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
+
+
+@pytest.fixture()
+def authed_client(monkeypatch) -> TestClient:
+    class StubAuthenticator:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def authenticate(self, email: str, password: str):
+            if password != "good-pass":
+                return None
+            return AuthenticatedUser(email=email)
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr("_2001.api.app.AuthenticatorClient", StubAuthenticator)
+    settings = Settings(
+        environment="test", log_level="WARNING", database_url=DATABASE_URL
+    )
+    with TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
+ROWAN = ("rowan.ashby@example.org", "good-pass")
+
+
+def test_own_profile_requires_authentication(authed_client: TestClient) -> None:
+    response = authed_client.get(f"{MEMBER}/me")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"].startswith("Basic realm=")
+
+
+def test_own_profile_resolves_by_authenticated_email(authed_client: TestClient) -> None:
+    response = authed_client.get(f"{MEMBER}/me", auth=ROWAN)
+
+    assert response.status_code == 200
+    assert response.json()["username"] == "rowan.ashby"
+    assert response.json()["display_name"] == "Rowan Ashby"
+
+
+def test_own_profile_unknown_email_is_404(authed_client: TestClient) -> None:
+    response = authed_client.get(f"{MEMBER}/me", auth=("nobody@example.org", "good-pass"))
+
+    assert response.status_code == 404
+
+
+def test_update_own_profile(authed_client: TestClient) -> None:
+    response = authed_client.patch(
+        f"{MEMBER}/me", json={"bio": "Updated through /me."}, auth=ROWAN
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bio"] == "Updated through /me."
+
+
+def test_delete_own_profile(authed_client: TestClient) -> None:
+    created = authed_client.post(
+        MEMBER,
+        json={"username": "self.delete", "email": "self.delete@example.org"},
+        auth=("grace@plymouth.ac.uk", "good-pass"),
+    )
+    assert created.status_code == 201
+
+    account = ("self.delete@example.org", "good-pass")
+    assert authed_client.delete(f"{MEMBER}/me", auth=account).status_code == 204
+    assert authed_client.get(f"{MEMBER}/me", auth=account).status_code == 404
 
 
 def test_list_members_returns_demo_data(client: TestClient) -> None:
@@ -104,6 +173,49 @@ def test_register_member_and_reject_duplicates(client: TestClient) -> None:
     assert duplicate.json()["error"]["code"] == "conflict"
 
     assert client.delete(f"{MEMBER}/{member_id}").status_code == 204
+
+
+def test_create_member_with_only_a_username(client: TestClient) -> None:
+    first = client.post(MEMBER, json={"username": "solo.walker"})
+    assert first.status_code == 201
+    body = first.json()
+    assert body["display_name"] == "solo.walker"
+    assert body["email"] is None
+    assert body["first_name"] is None
+    assert body["location"] is None
+    assert body["preference_count"] == 0
+
+    second = client.post(MEMBER, json={"username": "solo.walker.two"})
+    assert second.status_code == 201
+    assert second.json()["email"] is None
+
+    for member_id in (body["member_id"], second.json()["member_id"]):
+        assert client.delete(f"{MEMBER}/{member_id}").status_code == 204
+
+
+def test_email_remains_unique_when_supplied(client: TestClient) -> None:
+    created = client.post(
+        MEMBER, json={"username": "dup.one", "email": "dup@example.org"}
+    )
+    assert created.status_code == 201
+
+    clash = client.post(
+        MEMBER, json={"username": "dup.two", "email": "DUP@example.org"}
+    )
+    assert clash.status_code == 409
+
+    assert client.delete(f"{MEMBER}/{created.json()['member_id']}").status_code == 204
+
+
+def test_profile_includes_preferences(client: TestClient) -> None:
+    body = client.get(f"{MEMBER}/1").json()
+
+    assert [item["activity_slug"] for item in body["preferences"]] == [
+        "walking",
+        "hiking",
+        "cycling",
+    ]
+    assert body["preferences"][0]["preference_rank"] == 1
 
 
 def test_register_rejects_unknown_locality(client: TestClient) -> None:

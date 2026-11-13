@@ -11,7 +11,7 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 
 from _2001.db import SCHEMA, Base
 
-SCHEMA_SQL = Path(__file__).resolve().parents[1] / "sql" / "profile_service_schema.sql"
+SCHEMA_SQL = Path(__file__).resolve().parents[1] / "sql" / "CW2_schema.sql"
 
 EXPECTED_TABLES = {
     "ActivityCategory",
@@ -81,10 +81,11 @@ def test_indexes_keep_included_columns() -> None:
         for table in Base.metadata.tables.values()
         for index in table.indexes
     }
-    assert (
-        "CREATE INDEX [IX_MemberPreference_TypeId] ON profile.[MemberPreference] "
-        "([ActivityTypeId]) INCLUDE ([MemberId])" in statements
+    expected = (
+        f"CREATE INDEX [IX_MemberPreference_TypeId] ON [{SCHEMA}].[MemberPreference] "
+        "([ActivityTypeId]) INCLUDE ([MemberId])"
     )
+    assert expected in statements
 
 
 def test_orm_objects_match_the_handwritten_script() -> None:
@@ -103,7 +104,7 @@ def test_orm_objects_match_the_handwritten_script() -> None:
     }
     assert orm_constraints == script_constraints
 
-    script_indexes = set(re.findall(r"CREATE INDEX\s+(\w+)", script))
+    script_indexes = set(re.findall(r"CREATE (?:UNIQUE )?INDEX\s+(\w+)", script))
     orm_indexes = {
         index.name for table in Base.metadata.tables.values() for index in table.indexes
     }

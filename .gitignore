@@ -9,5 +9,5 @@ wheels/
 # Virtual environments
 .venv
 
-# Documentation and diagrams (kept out of version control)
+# Documentation, diagrams and reports (kept out of version control)
 docs/

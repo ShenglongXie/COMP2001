@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from _2001.api.schemas.preference import PreferenceRead
 from _2001.db.models import Member
 
 Username = Annotated[
@@ -23,6 +24,12 @@ Language = Annotated[str, StringConstraints(min_length=2, max_length=5)]
 Visibility = Literal["public", "followers", "private"]
 AccountStatus = Literal["active", "suspended", "deactivated"]
 UnitSystem = Literal["metric", "imperial"]
+
+
+def display_name(member: Member) -> str:
+    parts = [member.first_name, member.last_name]
+    joined = " ".join(part.strip() for part in parts if part and part.strip())
+    return joined or member.username
 
 
 class LocationRead(BaseModel):
@@ -53,8 +60,9 @@ class MemberSummary(BaseModel):
 
     member_id: int
     username: str
-    first_name: str
-    last_name: str
+    display_name: str
+    first_name: str | None = None
+    last_name: str | None = None
     locality_name: str | None = None
     profile_visibility: Visibility
     account_status: AccountStatus
@@ -66,6 +74,7 @@ class MemberSummary(BaseModel):
         return cls(
             member_id=member.member_id,
             username=member.username,
+            display_name=display_name(member),
             first_name=member.first_name,
             last_name=member.last_name,
             locality_name=locality.name if locality else None,
@@ -77,10 +86,12 @@ class MemberSummary(BaseModel):
 
 class MemberCreate(BaseModel):
     username: Username
-    email: Email
-    first_name: PersonName
-    last_name: PersonName
-    password: Annotated[str, StringConstraints(min_length=8, max_length=128)]
+    email: Email | None = None
+    first_name: PersonName | None = None
+    last_name: PersonName | None = None
+    password: (
+        Annotated[str, StringConstraints(min_length=8, max_length=128)] | None
+    ) = None
     avatar_url: Annotated[str, StringConstraints(max_length=400)] | None = None
     bio: Annotated[str, StringConstraints(max_length=500)] | None = None
     locality_id: int | None = None
@@ -108,9 +119,10 @@ class MemberUpdate(BaseModel):
 class MemberRead(BaseModel):
     member_id: int
     username: str
-    email: str
-    first_name: str
-    last_name: str
+    display_name: str
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     avatar_url: str | None = None
     bio: str | None = None
     location: LocationRead | None = None
@@ -122,6 +134,7 @@ class MemberRead(BaseModel):
     last_login_at: datetime | None = None
     joined_at: datetime
     updated_at: datetime
+    preferences: list[PreferenceRead] = Field(default_factory=list)
     preference_count: int = Field(ge=0)
     following_count: int = Field(ge=0)
     follower_count: int = Field(ge=0)

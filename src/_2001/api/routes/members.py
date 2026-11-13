@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from _2001.api.deps import Pagination, get_pagination, get_session
-from _2001.api.errors import conflict, not_found, unprocessable
+from _2001.api.errors import ApiError, conflict, not_found, unprocessable
 from _2001.api.schemas.common import ErrorResponse, Page
 from _2001.api.schemas.member import (
     LocationRead,
@@ -16,7 +16,9 @@ from _2001.api.schemas.member import (
     MemberRead,
     MemberSummary,
     MemberUpdate,
+    display_name,
 )
+from _2001.api.schemas.preference import PreferenceRead
 from _2001.core.security import hash_password
 from _2001.db.models import (
     ActivityType,
@@ -71,9 +73,11 @@ def present_member(session: Session, member: Member) -> MemberRead:
         .select_from(MemberFollow)
         .where(MemberFollow.followee_member_id == member.member_id)
     )
+    preferences = sorted(member.preferences, key=lambda item: item.preference_rank)
     return MemberRead(
         member_id=member.member_id,
         username=member.username,
+        display_name=display_name(member),
         email=member.email,
         first_name=member.first_name,
         last_name=member.last_name,
@@ -88,7 +92,8 @@ def present_member(session: Session, member: Member) -> MemberRead:
         last_login_at=member.last_login_at,
         joined_at=member.joined_at,
         updated_at=member.updated_at,
-        preference_count=len(member.preferences),
+        preferences=[PreferenceRead.from_model(item) for item in preferences],
+        preference_count=len(preferences),
         following_count=following or 0,
         follower_count=followers or 0,
     )
@@ -114,6 +119,84 @@ def ensure_unique(session: Session, *, username: str | None, email: str | None, 
             stmt = stmt.where(Member.member_id != member_id)
         if session.scalar(stmt) is not None:
             raise conflict(f"Email '{email}' is already registered.")
+
+
+def current_member(request: Request, session: Session) -> Member:
+    user = getattr(request.state, "user", None)
+    if user is None:
+        raise ApiError(401, "unauthorized", "Authentication is required.")
+    member = session.scalars(
+        member_query().where(Member.email == user.email)
+    ).one_or_none()
+    if member is None:
+        raise not_found("Member", f"email {user.email}")
+    return member
+
+
+def apply_update(session: Session, member: Member, payload: MemberUpdate) -> MemberRead:
+    changes = payload.model_dump(exclude_unset=True)
+    password = changes.pop("password", None)
+    if "locality_id" in changes and changes["locality_id"] is not None:
+        ensure_locality(session, changes["locality_id"])
+    ensure_unique(
+        session,
+        username=changes.get("username"),
+        email=changes.get("email"),
+        member_id=member.member_id,
+    )
+    for field, value in changes.items():
+        setattr(member, field, value)
+    if password is not None:
+        member.password_hash = hash_password(password)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise conflict("Username or email is already registered.") from exc
+    return present_member(session, load_member(session, member.member_id))
+
+
+def remove_member(session: Session, member: Member) -> Response:
+    session.delete(member)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise conflict("Member is still referenced by other records.") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/me",
+    response_model=MemberRead,
+    responses={401: {"model": ErrorResponse}, **MEMBER_NOT_FOUND},
+    summary="Read the authenticated member's own profile",
+)
+def get_own_profile(request: Request, session: SessionDep) -> MemberRead:
+    return present_member(session, current_member(request, session))
+
+
+@router.patch(
+    "/me",
+    response_model=MemberRead,
+    responses={401: {"model": ErrorResponse}, **MEMBER_NOT_FOUND, **CONFLICT},
+    summary="Update the authenticated member's own profile",
+)
+def update_own_profile(
+    request: Request, payload: MemberUpdate, session: SessionDep
+) -> MemberRead:
+    return apply_update(session, current_member(request, session), payload)
+
+
+@router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={401: {"model": ErrorResponse}, **MEMBER_NOT_FOUND},
+    summary="Delete the authenticated member's own profile",
+)
+def delete_own_profile(request: Request, session: SessionDep) -> Response:
+    return remove_member(session, current_member(request, session))
 
 
 @router.get(
@@ -208,7 +291,9 @@ def create_member(
         email=payload.email,
         first_name=payload.first_name,
         last_name=payload.last_name,
-        password_hash=hash_password(payload.password),
+        password_hash=(
+            hash_password(payload.password) if payload.password else None
+        ),
         avatar_url=payload.avatar_url,
         bio=payload.bio,
         locality_id=payload.locality_id,
@@ -252,29 +337,7 @@ def update_member(
     member = session.get(Member, member_id)
     if member is None:
         raise not_found("Member", member_id)
-
-    changes = payload.model_dump(exclude_unset=True)
-    password = changes.pop("password", None)
-    if "locality_id" in changes and changes["locality_id"] is not None:
-        ensure_locality(session, changes["locality_id"])
-    ensure_unique(
-        session,
-        username=changes.get("username"),
-        email=changes.get("email"),
-        member_id=member_id,
-    )
-
-    for field, value in changes.items():
-        setattr(member, field, value)
-    if password is not None:
-        member.password_hash = hash_password(password)
-
-    try:
-        session.commit()
-    except IntegrityError as exc:
-        session.rollback()
-        raise conflict("Username or email is already registered.") from exc
-    return present_member(session, load_member(session, member_id))
+    return apply_update(session, member, payload)
 
 
 @router.delete(
@@ -288,10 +351,4 @@ def delete_member(member_id: int, session: SessionDep) -> Response:
     member = session.get(Member, member_id)
     if member is None:
         raise not_found("Member", member_id)
-    session.delete(member)
-    try:
-        session.commit()
-    except IntegrityError as exc:
-        session.rollback()
-        raise conflict("Member is still referenced by other records.") from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return remove_member(session, member)

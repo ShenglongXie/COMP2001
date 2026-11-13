@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
-SCHEMA = "profile"
+SCHEMA = "CW2"
 
 NAMING_CONVENTION = {
     "ix": "IX_%(table_name)s_%(column_0_name)s",

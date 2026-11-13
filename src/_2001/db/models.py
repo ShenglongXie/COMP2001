@@ -66,7 +66,7 @@ class Region(Base):
         "CountryId",
         SmallInteger,
         ForeignKey(
-            "profile.Country.CountryId", name="FK_Region_Country", ondelete="NO ACTION"
+            "CW2.Country.CountryId", name="FK_Region_Country", ondelete="NO ACTION"
         ),
         nullable=False,
     )
@@ -89,7 +89,7 @@ class Locality(Base):
         "RegionId",
         Integer,
         ForeignKey(
-            "profile.Region.RegionId", name="FK_Locality_Region", ondelete="NO ACTION"
+            "CW2.Region.RegionId", name="FK_Locality_Region", ondelete="NO ACTION"
         ),
         nullable=False,
     )
@@ -130,7 +130,7 @@ class ActivityType(Base):
         "CategoryId",
         SmallInteger,
         ForeignKey(
-            "profile.ActivityCategory.CategoryId",
+            "CW2.ActivityCategory.CategoryId",
             name="FK_ActivityType_Category",
             ondelete="NO ACTION",
         ),
@@ -175,7 +175,6 @@ class Member(Base):
     __tablename__ = "Member"
     __table_args__ = (
         UniqueConstraint("Username", name="UQ_Member_Username"),
-        UniqueConstraint("Email", name="UQ_Member_Email"),
         CheckConstraint(
             "PreferredUnitSystem IN ('metric', 'imperial')",
             name="CK_Member_UnitSystem",
@@ -188,7 +187,14 @@ class Member(Base):
             "AccountStatus IN ('active', 'suspended', 'deactivated')",
             name="CK_Member_Status",
         ),
+        Index(
+            "UQ_Member_Email",
+            "Email",
+            unique=True,
+            mssql_where=text("[Email] IS NOT NULL"),
+        ),
         Index("IX_Member_LocalityId", "LocalityId"),
+        {"implicit_returning": False},
     )
 
     member_id: Mapped[int] = mapped_column(
@@ -197,9 +203,15 @@ class Member(Base):
     username: Mapped[str] = mapped_column(
         "Username", ci_nvarchar(30), nullable=False
     )
-    email: Mapped[str] = mapped_column("Email", ci_nvarchar(320), nullable=False)
-    first_name: Mapped[str] = mapped_column("FirstName", Unicode(60), nullable=False)
-    last_name: Mapped[str] = mapped_column("LastName", Unicode(60), nullable=False)
+    email: Mapped[str | None] = mapped_column(
+        "Email", ci_nvarchar(320), nullable=True
+    )
+    first_name: Mapped[str | None] = mapped_column(
+        "FirstName", Unicode(60), nullable=True
+    )
+    last_name: Mapped[str | None] = mapped_column(
+        "LastName", Unicode(60), nullable=True
+    )
     avatar_url: Mapped[str | None] = mapped_column(
         "AvatarUrl", Unicode(400), nullable=True
     )
@@ -208,7 +220,7 @@ class Member(Base):
         "LocalityId",
         Integer,
         ForeignKey(
-            "profile.Locality.LocalityId", name="FK_Member_Locality", ondelete="SET NULL"
+            "CW2.Locality.LocalityId", name="FK_Member_Locality", ondelete="SET NULL"
         ),
         nullable=True,
     )
@@ -227,8 +239,8 @@ class Member(Base):
     account_status: Mapped[str] = mapped_column(
         "AccountStatus", String(12), nullable=False, server_default=text("'active'")
     )
-    password_hash: Mapped[str] = mapped_column(
-        "PasswordHash", String(255), nullable=False
+    password_hash: Mapped[str | None] = mapped_column(
+        "PasswordHash", String(255), nullable=True
     )
     email_verified_at: Mapped[datetime | None] = mapped_column(
         "EmailVerifiedAt", TIMESTAMP, nullable=True
@@ -288,7 +300,7 @@ class MemberPreference(Base):
         "MemberId",
         BigInteger,
         ForeignKey(
-            "profile.Member.MemberId",
+            "CW2.Member.MemberId",
             name="FK_MemberPreference_Member",
             ondelete="CASCADE",
         ),
@@ -298,7 +310,7 @@ class MemberPreference(Base):
         "ActivityTypeId",
         SmallInteger,
         ForeignKey(
-            "profile.ActivityType.ActivityTypeId",
+            "CW2.ActivityType.ActivityTypeId",
             name="FK_MemberPreference_Type",
             ondelete="NO ACTION",
         ),
@@ -311,7 +323,7 @@ class MemberPreference(Base):
         "SkillLevelId",
         SmallInteger,
         ForeignKey(
-            "profile.SkillLevel.SkillLevelId",
+            "CW2.SkillLevel.SkillLevelId",
             name="FK_MemberPreference_Skill",
             ondelete="SET NULL",
         ),
@@ -346,7 +358,7 @@ class MemberFollow(Base):
         "FollowerMemberId",
         BigInteger,
         ForeignKey(
-            "profile.Member.MemberId",
+            "CW2.Member.MemberId",
             name="FK_MemberFollow_Follower",
             ondelete="NO ACTION",
         ),
@@ -356,7 +368,7 @@ class MemberFollow(Base):
         "FolloweeMemberId",
         BigInteger,
         ForeignKey(
-            "profile.Member.MemberId",
+            "CW2.Member.MemberId",
             name="FK_MemberFollow_Followee",
             ondelete="NO ACTION",
         ),

@@ -1,49 +1,31 @@
-/* ============================================================================
-   Trail App  ·  ProfileService
-   Target      : Microsoft SQL Server 2019 / 2022 (remote instance)
-   Database    : any user database (script only adds a schema, never creates one)
-   Schema      : profile
-   Idempotent  : yes — re-running drops and recreates every object in profile
-   Contents    : 1. schema   2. drop     3. tables + keys/constraints
-                 4. indexes  5. demo data  6. verification SELECTs
-   Run as      : a login with CREATE SCHEMA + db_owner on the target database
-   ============================================================================ */
+-- Recreates the tables and demo data; existing table data will be lost.
 
 SET NOCOUNT ON;
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 GO
 
-/* ---------------------------------------------------------------------------
-   1. SCHEMA
-   SQL Server requires CREATE SCHEMA to be the only statement in its batch,
-   so it is issued through dynamic SQL. Guarded so the script is re-runnable.
-   --------------------------------------------------------------------------- */
-IF SCHEMA_ID('profile') IS NULL
-    EXEC ('CREATE SCHEMA profile AUTHORIZATION dbo;');
+-- Schema
+IF SCHEMA_ID('CW2') IS NULL
+    EXEC ('CREATE SCHEMA CW2 AUTHORIZATION dbo;');
 GO
 
-/* ---------------------------------------------------------------------------
-   2. DROP (children first, so no FK is ever orphaned)
-   --------------------------------------------------------------------------- */
-IF OBJECT_ID('profile.MemberPreference', 'U') IS NOT NULL DROP TABLE profile.MemberPreference;
-IF OBJECT_ID('profile.MemberFollow',     'U') IS NOT NULL DROP TABLE profile.MemberFollow;
-IF OBJECT_ID('profile.Member',           'U') IS NOT NULL DROP TABLE profile.Member;
-IF OBJECT_ID('profile.ActivityType',     'U') IS NOT NULL DROP TABLE profile.ActivityType;
-IF OBJECT_ID('profile.ActivityCategory', 'U') IS NOT NULL DROP TABLE profile.ActivityCategory;
-IF OBJECT_ID('profile.SkillLevel',       'U') IS NOT NULL DROP TABLE profile.SkillLevel;
-IF OBJECT_ID('profile.Locality',         'U') IS NOT NULL DROP TABLE profile.Locality;
-IF OBJECT_ID('profile.Region',           'U') IS NOT NULL DROP TABLE profile.Region;
-IF OBJECT_ID('profile.Country',          'U') IS NOT NULL DROP TABLE profile.Country;
+-- Remove existing objects
+IF OBJECT_ID('CW2.vw_MemberPreferenceDetail', 'V') IS NOT NULL DROP VIEW CW2.vw_MemberPreferenceDetail;
+IF OBJECT_ID('CW2.vw_MemberProfile', 'V') IS NOT NULL DROP VIEW CW2.vw_MemberProfile;
+IF OBJECT_ID('CW2.MemberPreference', 'U') IS NOT NULL DROP TABLE CW2.MemberPreference;
+IF OBJECT_ID('CW2.MemberFollow',     'U') IS NOT NULL DROP TABLE CW2.MemberFollow;
+IF OBJECT_ID('CW2.Member',           'U') IS NOT NULL DROP TABLE CW2.Member;
+IF OBJECT_ID('CW2.ActivityType',     'U') IS NOT NULL DROP TABLE CW2.ActivityType;
+IF OBJECT_ID('CW2.ActivityCategory', 'U') IS NOT NULL DROP TABLE CW2.ActivityCategory;
+IF OBJECT_ID('CW2.SkillLevel',       'U') IS NOT NULL DROP TABLE CW2.SkillLevel;
+IF OBJECT_ID('CW2.Locality',         'U') IS NOT NULL DROP TABLE CW2.Locality;
+IF OBJECT_ID('CW2.Region',           'U') IS NOT NULL DROP TABLE CW2.Region;
+IF OBJECT_ID('CW2.Country',          'U') IS NOT NULL DROP TABLE CW2.Country;
 GO
 
-/* ---------------------------------------------------------------------------
-   3. TABLES
-   Lookup tables use short natural codes as PKs (small, stable, human readable).
-   Member uses a surrogate IDENTITY key: the username is a candidate key that
-   the member may change, so it must not anchor foreign keys.
-   --------------------------------------------------------------------------- */
-
-/* 3.1 COUNTRY — the four UK nations (ISO 3166-2 sub-division codes) */
-CREATE TABLE profile.Country
+-- Tables
+CREATE TABLE CW2.Country
 (
     CountryId   SMALLINT      NOT NULL,
     IsoCode     CHAR(6)       NOT NULL,
@@ -55,8 +37,7 @@ CREATE TABLE profile.Country
 );
 GO
 
-/* 3.2 REGION — county / unitary authority, keyed by ONS GSS code */
-CREATE TABLE profile.Region
+CREATE TABLE CW2.Region
 (
     RegionId    INT           NOT NULL,
     CountryId   SMALLINT      NOT NULL,
@@ -66,12 +47,11 @@ CREATE TABLE profile.Region
     CONSTRAINT UQ_Region_GssCode  UNIQUE (CountryId, GssCode),
     CONSTRAINT CK_Region_GssCode  CHECK (GssCode LIKE '[EWSN][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'),
     CONSTRAINT FK_Region_Country  FOREIGN KEY (CountryId)
-        REFERENCES profile.Country (CountryId) ON DELETE NO ACTION
+        REFERENCES CW2.Country (CountryId) ON DELETE NO ACTION
 );
 GO
 
-/* 3.3 LOCALITY — town / village; unique within its region, not globally */
-CREATE TABLE profile.Locality
+CREATE TABLE CW2.Locality
 (
     LocalityId  INT           NOT NULL,
     RegionId    INT           NOT NULL,
@@ -79,12 +59,11 @@ CREATE TABLE profile.Locality
     CONSTRAINT PK_Locality          PRIMARY KEY (LocalityId),
     CONSTRAINT UQ_Locality_Name     UNIQUE (RegionId, Name),
     CONSTRAINT FK_Locality_Region   FOREIGN KEY (RegionId)
-        REFERENCES profile.Region (RegionId) ON DELETE NO ACTION
+        REFERENCES CW2.Region (RegionId) ON DELETE NO ACTION
 );
 GO
 
-/* 3.4 ACTIVITY CATEGORY — foot / wheel / water */
-CREATE TABLE profile.ActivityCategory
+CREATE TABLE CW2.ActivityCategory
 (
     CategoryId  SMALLINT      NOT NULL,
     Name        VARCHAR(24)   NOT NULL,
@@ -94,8 +73,7 @@ CREATE TABLE profile.ActivityCategory
 );
 GO
 
-/* 3.5 ACTIVITY TYPE — hiking, walking, trail running, cycling ... */
-CREATE TABLE profile.ActivityType
+CREATE TABLE CW2.ActivityType
 (
     ActivityTypeId  SMALLINT      NOT NULL,
     CategoryId      SMALLINT      NOT NULL,
@@ -105,12 +83,11 @@ CREATE TABLE profile.ActivityType
     CONSTRAINT PK_ActivityType        PRIMARY KEY (ActivityTypeId),
     CONSTRAINT UQ_ActivityType_Slug   UNIQUE (Slug),
     CONSTRAINT FK_ActivityType_Category FOREIGN KEY (CategoryId)
-        REFERENCES profile.ActivityCategory (CategoryId) ON DELETE NO ACTION
+        REFERENCES CW2.ActivityCategory (CategoryId) ON DELETE NO ACTION
 );
 GO
 
-/* 3.6 SKILL LEVEL — global vocabulary, one cap on trail difficulty per level */
-CREATE TABLE profile.SkillLevel
+CREATE TABLE CW2.SkillLevel
 (
     SkillLevelId        SMALLINT     NOT NULL,
     Code                VARCHAR(16)  NOT NULL,
@@ -122,16 +99,13 @@ CREATE TABLE profile.SkillLevel
 );
 GO
 
-/* 3.7 MEMBER — the profile page itself.
-   Username / Email carry an explicit CI collation so uniqueness is
-   case-insensitive regardless of the database default collation. */
-CREATE TABLE profile.Member
+CREATE TABLE CW2.Member
 (
     MemberId             BIGINT        IDENTITY(1,1) NOT NULL,
     Username             NVARCHAR(30)  COLLATE Latin1_General_100_CI_AS NOT NULL,
-    Email                NVARCHAR(320) COLLATE Latin1_General_100_CI_AS NOT NULL,
-    FirstName            NVARCHAR(60)  NOT NULL,
-    LastName             NVARCHAR(60)  NOT NULL,
+    Email                NVARCHAR(320) COLLATE Latin1_General_100_CI_AS NULL,
+    FirstName            NVARCHAR(60)  NULL,
+    LastName             NVARCHAR(60)  NULL,
     AvatarUrl            NVARCHAR(400) NULL,
     Bio                  NVARCHAR(500) NULL,
     LocalityId           INT           NULL,
@@ -139,27 +113,22 @@ CREATE TABLE profile.Member
     PreferredLanguage    CHAR(5)       NOT NULL CONSTRAINT DF_Member_Language   DEFAULT ('en-GB'),
     ProfileVisibility    VARCHAR(10)   NOT NULL CONSTRAINT DF_Member_Visibility DEFAULT ('public'),
     AccountStatus        VARCHAR(12)   NOT NULL CONSTRAINT DF_Member_Status     DEFAULT ('active'),
-    PasswordHash         VARCHAR(255)  NOT NULL,
+    PasswordHash         VARCHAR(255)  NULL,
     EmailVerifiedAt      DATETIME2(0)  NULL,
     LastLoginAt          DATETIME2(0)  NULL,
     JoinedAt             DATETIME2(0)  NOT NULL CONSTRAINT DF_Member_JoinedAt   DEFAULT (SYSUTCDATETIME()),
     UpdatedAt            DATETIME2(0)  NOT NULL CONSTRAINT DF_Member_UpdatedAt  DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_Member              PRIMARY KEY (MemberId),
     CONSTRAINT UQ_Member_Username     UNIQUE (Username),
-    CONSTRAINT UQ_Member_Email        UNIQUE (Email),
     CONSTRAINT CK_Member_UnitSystem   CHECK (PreferredUnitSystem IN ('metric', 'imperial')),
     CONSTRAINT CK_Member_Visibility   CHECK (ProfileVisibility IN ('public', 'followers', 'private')),
     CONSTRAINT CK_Member_Status       CHECK (AccountStatus IN ('active', 'suspended', 'deactivated')),
     CONSTRAINT FK_Member_Locality     FOREIGN KEY (LocalityId)
-        REFERENCES profile.Locality (LocalityId) ON DELETE SET NULL
+        REFERENCES CW2.Locality (LocalityId) ON DELETE SET NULL
 );
 GO
 
-/* 3.8 MEMBERPREFERENCE — LINK ENTITY.
-   Resolves the M:N between MEMBER and ACTIVITYTYPE. The composite primary key
-   makes "one preference per activity per member" a database rule, and the
-   unique (MemberId, PreferenceRank) keeps the display order unambiguous. */
-CREATE TABLE profile.MemberPreference
+CREATE TABLE CW2.MemberPreference
 (
     MemberId        BIGINT       NOT NULL,
     ActivityTypeId  SMALLINT     NOT NULL,
@@ -170,17 +139,15 @@ CREATE TABLE profile.MemberPreference
     CONSTRAINT UQ_MemberPreference_Rank  UNIQUE (MemberId, PreferenceRank),
     CONSTRAINT CK_MemberPreference_Rank  CHECK (PreferenceRank BETWEEN 1 AND 20),
     CONSTRAINT FK_MemberPreference_Member FOREIGN KEY (MemberId)
-        REFERENCES profile.Member (MemberId) ON DELETE CASCADE,
+        REFERENCES CW2.Member (MemberId) ON DELETE CASCADE,
     CONSTRAINT FK_MemberPreference_Type   FOREIGN KEY (ActivityTypeId)
-        REFERENCES profile.ActivityType (ActivityTypeId) ON DELETE NO ACTION,
+        REFERENCES CW2.ActivityType (ActivityTypeId) ON DELETE NO ACTION,
     CONSTRAINT FK_MemberPreference_Skill  FOREIGN KEY (SkillLevelId)
-        REFERENCES profile.SkillLevel (SkillLevelId) ON DELETE SET NULL
+        REFERENCES CW2.SkillLevel (SkillLevelId) ON DELETE SET NULL
 );
 GO
 
-/* 3.9 MEMBERFOLLOW — LINK ENTITY for the self-referencing M:N "follows".
-   Two FKs both point at Member; the CHECK forbids following yourself. */
-CREATE TABLE profile.MemberFollow
+CREATE TABLE CW2.MemberFollow
 (
     FollowerMemberId  BIGINT       NOT NULL,
     FolloweeMemberId  BIGINT       NOT NULL,
@@ -188,43 +155,32 @@ CREATE TABLE profile.MemberFollow
     CONSTRAINT PK_MemberFollow        PRIMARY KEY (FollowerMemberId, FolloweeMemberId),
     CONSTRAINT CK_MemberFollow_NoSelf CHECK (FollowerMemberId <> FolloweeMemberId),
     CONSTRAINT FK_MemberFollow_Follower FOREIGN KEY (FollowerMemberId)
-        REFERENCES profile.Member (MemberId) ON DELETE NO ACTION,
+        REFERENCES CW2.Member (MemberId) ON DELETE NO ACTION,
     CONSTRAINT FK_MemberFollow_Followee FOREIGN KEY (FolloweeMemberId)
-        REFERENCES profile.Member (MemberId) ON DELETE NO ACTION
+        REFERENCES CW2.Member (MemberId) ON DELETE NO ACTION
 );
 GO
 
-/* ---------------------------------------------------------------------------
-   4. INDEXES
-   SQL Server does not index foreign keys automatically; every FK that is
-   queried in the "wrong" direction gets an explicit non-clustered index.
-   --------------------------------------------------------------------------- */
-CREATE INDEX IX_Region_CountryId            ON profile.Region (CountryId);
-CREATE INDEX IX_Locality_RegionId           ON profile.Locality (RegionId);
-CREATE INDEX IX_ActivityType_CategoryId     ON profile.ActivityType (CategoryId);
-CREATE INDEX IX_Member_LocalityId           ON profile.Member (LocalityId);
-CREATE INDEX IX_MemberPreference_TypeId     ON profile.MemberPreference (ActivityTypeId) INCLUDE (MemberId);
-CREATE INDEX IX_MemberPreference_SkillLevel ON profile.MemberPreference (SkillLevelId) INCLUDE (MemberId);
-CREATE INDEX IX_MemberFollow_FolloweeId     ON profile.MemberFollow (FolloweeMemberId) INCLUDE (FollowerMemberId);
+-- Indexes
+CREATE INDEX IX_Region_CountryId            ON CW2.Region (CountryId);
+CREATE INDEX IX_Locality_RegionId           ON CW2.Locality (RegionId);
+CREATE INDEX IX_ActivityType_CategoryId     ON CW2.ActivityType (CategoryId);
+CREATE UNIQUE INDEX UQ_Member_Email         ON CW2.Member (Email) WHERE Email IS NOT NULL;
+CREATE INDEX IX_Member_LocalityId           ON CW2.Member (LocalityId);
+CREATE INDEX IX_MemberPreference_TypeId     ON CW2.MemberPreference (ActivityTypeId) INCLUDE (MemberId);
+CREATE INDEX IX_MemberPreference_SkillLevel ON CW2.MemberPreference (SkillLevelId) INCLUDE (MemberId);
+CREATE INDEX IX_MemberFollow_FolloweeId     ON CW2.MemberFollow (FolloweeMemberId) INCLUDE (FollowerMemberId);
 GO
 
-/* ---------------------------------------------------------------------------
-   5. DEMO DATA
-   10 members, 8 regions, 10 localities, 5 activity types, 4 skill levels,
-   16 preferences and 10 follow links — enough to exercise every join,
-   the optional LocalityId, and the "member with no preference" case.
-   --------------------------------------------------------------------------- */
-
-/* 5.1 countries */
-INSERT INTO profile.Country (CountryId, IsoCode, Name) VALUES
+-- Demo data
+INSERT INTO CW2.Country (CountryId, IsoCode, Name) VALUES
     (1, 'GB-ENG', N'England'),
     (2, 'GB-SCT', N'Scotland'),
     (3, 'GB-WLS', N'Wales'),
     (4, 'GB-NIR', N'Northern Ireland');
 GO
 
-/* 5.2 regions (ONS GSS codes) */
-INSERT INTO profile.Region (RegionId, CountryId, GssCode, Name) VALUES
+INSERT INTO CW2.Region (RegionId, CountryId, GssCode, Name) VALUES
     (1, 1, 'E10000007', N'Derbyshire'),
     (2, 1, 'E10000006', N'Cumbria'),
     (3, 1, 'E10000023', N'North Yorkshire'),
@@ -235,8 +191,7 @@ INSERT INTO profile.Region (RegionId, CountryId, GssCode, Name) VALUES
     (8, 4, 'N09000010', N'County Down');
 GO
 
-/* 5.3 localities */
-INSERT INTO profile.Locality (LocalityId, RegionId, Name) VALUES
+INSERT INTO CW2.Locality (LocalityId, RegionId, Name) VALUES
     (1,  1, N'Bakewell'),
     (2,  1, N'Castleton'),
     (3,  2, N'Keswick'),
@@ -249,14 +204,13 @@ INSERT INTO profile.Locality (LocalityId, RegionId, Name) VALUES
     (10, 8, N'Newcastle');
 GO
 
-/* 5.4 activity categories and types */
-INSERT INTO profile.ActivityCategory (CategoryId, Name, Description) VALUES
+INSERT INTO CW2.ActivityCategory (CategoryId, Name, Description) VALUES
     (1, 'foot',  N'Activities travelled on foot'),
     (2, 'wheel', N'Activities travelled on wheels'),
     (3, 'water', N'Activities on the water');
 GO
 
-INSERT INTO profile.ActivityType (ActivityTypeId, CategoryId, Slug, Label, IsActive) VALUES
+INSERT INTO CW2.ActivityType (ActivityTypeId, CategoryId, Slug, Label, IsActive) VALUES
     (1, 1, 'walking',       N'Walking',       1),
     (2, 1, 'hiking',        N'Hiking',        1),
     (3, 1, 'trail-running', N'Trail Running', 1),
@@ -264,19 +218,15 @@ INSERT INTO profile.ActivityType (ActivityTypeId, CategoryId, Slug, Label, IsAct
     (5, 3, 'kayaking',      N'Kayaking',      0);
 GO
 
-/* 5.5 skill levels */
-INSERT INTO profile.SkillLevel (SkillLevelId, Code, Label, MaxTrailDifficulty) VALUES
+INSERT INTO CW2.SkillLevel (SkillLevelId, Code, Label, MaxTrailDifficulty) VALUES
     (1, 'beginner',     N'Beginner',     2),
     (2, 'intermediate', N'Intermediate', 3),
     (3, 'advanced',     N'Advanced',     4),
     (4, 'expert',       N'Expert',       5);
 GO
 
-/* 5.6 members — IDENTITY_INSERT is switched on only to keep the demo data
-   referencable and stable across re-runs; the identity seed is re-based at
-   the end so application inserts start after the demo block. */
-SET IDENTITY_INSERT profile.Member ON;
-INSERT INTO profile.Member
+SET IDENTITY_INSERT CW2.Member ON;
+INSERT INTO CW2.Member
     (MemberId, Username, Email, FirstName, LastName, AvatarUrl, Bio, LocalityId,
      PreferredUnitSystem, PreferredLanguage, ProfileVisibility, AccountStatus,
      PasswordHash, EmailVerifiedAt, LastLoginAt, JoinedAt, UpdatedAt)
@@ -335,15 +285,13 @@ VALUES
      'metric', 'en-GB', 'private', 'suspended',
      'AQAAAAIAAYagAAAAEExampleHashOwen10', '2025-09-01T12:00:00', '2026-10-20T15:10:00',
      '2025-09-01T12:00:00', '2026-10-20T15:10:00');
-SET IDENTITY_INSERT profile.Member OFF;
+SET IDENTITY_INSERT CW2.Member OFF;
 GO
 
-/* keep the identity seed ahead of the demo rows */
-DBCC CHECKIDENT ('profile.Member', RESEED);
+DBCC CHECKIDENT ('CW2.Member', RESEED);
 GO
 
-/* 5.7 preferences (link entity). Member 5 deliberately has none. */
-INSERT INTO profile.MemberPreference (MemberId, ActivityTypeId, PreferenceRank, SkillLevelId) VALUES
+INSERT INTO CW2.MemberPreference (MemberId, ActivityTypeId, PreferenceRank, SkillLevelId) VALUES
     (1, 1, 1, 2), (1, 2, 2, 2), (1, 4, 3, 1),
     (2, 2, 1, 3), (2, 1, 2, 1),
     (3, 2, 1, 4), (3, 3, 2, 3), (3, 4, 3, 2),
@@ -355,8 +303,7 @@ INSERT INTO profile.MemberPreference (MemberId, ActivityTypeId, PreferenceRank, 
     (10, 1, 1, 1);
 GO
 
-/* 5.8 follow links (self-referencing link entity, never self) */
-INSERT INTO profile.MemberFollow (FollowerMemberId, FolloweeMemberId, FollowedAt) VALUES
+INSERT INTO CW2.MemberFollow (FollowerMemberId, FolloweeMemberId, FollowedAt) VALUES
     (1, 2, '2025-05-01T09:00:00'),
     (1, 4, '2025-07-14T18:20:00'),
     (2, 1, '2025-05-02T08:10:00'),
@@ -369,12 +316,7 @@ INSERT INTO profile.MemberFollow (FollowerMemberId, FolloweeMemberId, FollowedAt
     (9, 4, '2024-09-01T11:02:00');
 GO
 
-/* ---------------------------------------------------------------------------
-   6. VERIFICATION — run these after the script to prove the data is there
-   --------------------------------------------------------------------------- */
-
-/* 6.1 row count for every table in the profile schema (dynamic, so a new
-   table is picked up automatically) */
+-- Verification queries
 DECLARE @sql NVARCHAR(MAX) = N'';
 
 SELECT @sql = STRING_AGG(
@@ -383,14 +325,13 @@ SELECT @sql = STRING_AGG(
            N' UNION ALL ')
 FROM sys.tables AS t
 JOIN sys.schemas AS s ON s.schema_id = t.schema_id
-WHERE s.name = 'profile';
+WHERE s.name = 'CW1';
 
 SET @sql = N'SELECT TableName, [Rows] FROM (' + @sql + N') AS counts ORDER BY TableName;';
 
 EXEC sys.sp_executesql @sql;
 GO
 
-/* 6.2 the profile page: one row per member with location, preferences, social */
 SELECT
     m.MemberId,
     m.Username,
@@ -402,18 +343,17 @@ SELECT
     m.PreferredLanguage,
     m.ProfileVisibility,
     m.AccountStatus,
-    (SELECT COUNT(*) FROM profile.MemberPreference p WHERE p.MemberId = m.MemberId)        AS Preferences,
-    (SELECT COUNT(*) FROM profile.MemberFollow f WHERE f.FollowerMemberId = m.MemberId)    AS [Following],
-    (SELECT COUNT(*) FROM profile.MemberFollow f WHERE f.FolloweeMemberId = m.MemberId)    AS Followers,
+    (SELECT COUNT(*) FROM CW2.MemberPreference p WHERE p.MemberId = m.MemberId)        AS Preferences,
+    (SELECT COUNT(*) FROM CW2.MemberFollow f WHERE f.FollowerMemberId = m.MemberId)    AS [Following],
+    (SELECT COUNT(*) FROM CW2.MemberFollow f WHERE f.FolloweeMemberId = m.MemberId)    AS Followers,
     m.JoinedAt
-FROM profile.Member AS m
-LEFT JOIN profile.Locality AS l ON l.LocalityId = m.LocalityId
-LEFT JOIN profile.Region   AS r ON r.RegionId   = l.RegionId
-LEFT JOIN profile.Country  AS c ON c.CountryId  = r.CountryId
+FROM CW2.Member AS m
+LEFT JOIN CW2.Locality AS l ON l.LocalityId = m.LocalityId
+LEFT JOIN CW2.Region   AS r ON r.RegionId   = l.RegionId
+LEFT JOIN CW2.Country  AS c ON c.CountryId  = r.CountryId
 ORDER BY m.MemberId;
 GO
 
-/* 6.3 preferences with their vocabulary rows (member -> link -> activity -> category) */
 SELECT
     m.Username,
     p.PreferenceRank,
@@ -422,54 +362,51 @@ SELECT
     ISNULL(sl.Label, N'(unset)') AS SkillLevel,
     sl.MaxTrailDifficulty,
     p.CreatedAt
-FROM profile.MemberPreference AS p
-JOIN profile.Member           AS m   ON m.MemberId        = p.MemberId
-JOIN profile.ActivityType     AS act ON act.ActivityTypeId = p.ActivityTypeId
-JOIN profile.ActivityCategory AS ac  ON ac.CategoryId      = act.CategoryId
-LEFT JOIN profile.SkillLevel  AS sl  ON sl.SkillLevelId    = p.SkillLevelId
+FROM CW2.MemberPreference AS p
+JOIN CW2.Member           AS m   ON m.MemberId        = p.MemberId
+JOIN CW2.ActivityType     AS act ON act.ActivityTypeId = p.ActivityTypeId
+JOIN CW2.ActivityCategory AS ac  ON ac.CategoryId      = act.CategoryId
+LEFT JOIN CW2.SkillLevel  AS sl  ON sl.SkillLevelId    = p.SkillLevelId
 ORDER BY m.Username, p.PreferenceRank;
 GO
 
-/* 6.4 follow graph read in both directions */
 SELECT
     f.FollowerMemberId,
     fol.Username AS Follower,
     f.FolloweeMemberId,
     fee.Username AS Followee,
     f.FollowedAt
-FROM profile.MemberFollow AS f
-JOIN profile.Member AS fol ON fol.MemberId = f.FollowerMemberId
-JOIN profile.Member AS fee ON fee.MemberId = f.FolloweeMemberId
+FROM CW2.MemberFollow AS f
+JOIN CW2.Member AS fol ON fol.MemberId = f.FollowerMemberId
+JOIN CW2.Member AS fee ON fee.MemberId = f.FolloweeMemberId
 ORDER BY f.FollowerMemberId, f.FolloweeMemberId;
 GO
 
-/* 6.5 geographic roll-up — proves the three-level location join works */
 SELECT
     c.Name           AS Nation,
     r.Name           AS Region,
     l.Name           AS Locality,
     COUNT(m.MemberId) AS Members
-FROM profile.Country  AS c
-LEFT JOIN profile.Region   AS r ON r.CountryId  = c.CountryId
-LEFT JOIN profile.Locality AS l ON l.RegionId   = r.RegionId
-LEFT JOIN profile.Member   AS m ON m.LocalityId = l.LocalityId
+FROM CW2.Country  AS c
+LEFT JOIN CW2.Region   AS r ON r.CountryId  = c.CountryId
+LEFT JOIN CW2.Locality AS l ON l.RegionId   = r.RegionId
+LEFT JOIN CW2.Member   AS m ON m.LocalityId = l.LocalityId
 GROUP BY c.Name, r.Name, l.Name
 ORDER BY c.Name, r.Name, l.Name;
 GO
 
-/* 6.6 self-check: every table must be non-empty */
 SELECT
     N'all 9 tables populated' AS CheckName,
     CASE WHEN MIN(cnt) > 0 THEN N'PASS' ELSE N'FAIL' END AS Result
 FROM (
-    SELECT COUNT(*) AS cnt FROM profile.Country
-    UNION ALL SELECT COUNT(*) FROM profile.Region
-    UNION ALL SELECT COUNT(*) FROM profile.Locality
-    UNION ALL SELECT COUNT(*) FROM profile.ActivityCategory
-    UNION ALL SELECT COUNT(*) FROM profile.ActivityType
-    UNION ALL SELECT COUNT(*) FROM profile.SkillLevel
-    UNION ALL SELECT COUNT(*) FROM profile.Member
-    UNION ALL SELECT COUNT(*) FROM profile.MemberPreference
-    UNION ALL SELECT COUNT(*) FROM profile.MemberFollow
+    SELECT COUNT(*) AS cnt FROM CW2.Country
+    UNION ALL SELECT COUNT(*) FROM CW2.Region
+    UNION ALL SELECT COUNT(*) FROM CW2.Locality
+    UNION ALL SELECT COUNT(*) FROM CW2.ActivityCategory
+    UNION ALL SELECT COUNT(*) FROM CW2.ActivityType
+    UNION ALL SELECT COUNT(*) FROM CW2.SkillLevel
+    UNION ALL SELECT COUNT(*) FROM CW2.Member
+    UNION ALL SELECT COUNT(*) FROM CW2.MemberPreference
+    UNION ALL SELECT COUNT(*) FROM CW2.MemberFollow
 ) AS per_table;
 GO
